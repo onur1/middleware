@@ -363,12 +363,16 @@ type Middleware struct {
 	responseWriter http.ResponseWriter
 }
 
-func NewMiddleware(w http.ResponseWriter, r *http.Request) *Middleware {
-	m := &Middleware{
+func (m *Middleware) Reset(w http.ResponseWriter, r *http.Request) {
+	*m = Middleware{
 		request:        r,
 		responseWriter: w,
 	}
+}
 
+func NewMiddleware(w http.ResponseWriter, r *http.Request) *Middleware {
+	m := new(Middleware)
+	m.Reset(w, r)
 	return m
 }
 
