@@ -21,8 +21,9 @@ type Connection struct {
 	sub func(func())
 }
 
-// A Middleware represents the result of a computation/mutation on a connection which
-// either yields a value of type A, or fails with an error.
+// A Middleware represents a computation which modifies a HTTP connection or reads
+// from it, producing either a value of type A or an error for the next middleware
+// in the pipeline.
 type Middleware[A any] func(s *Connection) data.Result[A]
 
 // MIME types.
