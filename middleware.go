@@ -254,38 +254,36 @@ func DecodeMethod[A any](f func(string) data.Result[A]) Middleware[A] {
 	})
 }
 
-// DecodeBody creates a Middleware which decodes (and optionally validates)
-// the request body into a value of type A.
-func DecodeBody[A any]() Middleware[*A] {
-	return fromConnection(func(c *Connection) data.Result[*A] {
-		var (
-			err         error
-			dst         = new(A)
-			contentType = c.R.Header.Get("Content-Type")
-		)
+// DecodeBody middleware decodes (and optionally validates)  the request body into
+// a value of type A.
+func DecodeBody[A any](c *Connection) data.Result[*A] {
+	var (
+		err         error
+		dst         = new(A)
+		contentType = c.R.Header.Get("Content-Type")
+	)
 
-		switch contentType {
-		case MediaTypeFormURLEncoded:
-			if err = c.R.ParseForm(); err != nil {
-				return result.Error[*A](err)
-			}
-			if err = decoder.Decode(dst, c.R.PostForm); err != nil {
-				return result.Error[*A](err)
-			}
-		case MediaTypeApplicationJSON:
-			if err = json.NewDecoder(c.R.Body).Decode(dst); err != nil {
-				return result.Error[*A](err)
-			}
-		default:
-			return result.Error[*A](ErrUnknownContentType)
-		}
-
-		if err = validation.Validate(dst); err != nil {
+	switch contentType {
+	case MediaTypeFormURLEncoded:
+		if err = c.R.ParseForm(); err != nil {
 			return result.Error[*A](err)
 		}
+		if err = decoder.Decode(dst, c.R.PostForm); err != nil {
+			return result.Error[*A](err)
+		}
+	case MediaTypeApplicationJSON:
+		if err = json.NewDecoder(c.R.Body).Decode(dst); err != nil {
+			return result.Error[*A](err)
+		}
+	default:
+		return result.Error[*A](ErrUnknownContentType)
+	}
 
-		return result.Ok(dst)
-	})
+	if err = validation.Validate(dst); err != nil {
+		return result.Error[*A](err)
+	}
+
+	return result.Ok(dst)
 }
 
 // DecodeHeader creates a middleware by validating a string value from a header.
@@ -298,30 +296,24 @@ func DecodeHeader(name string, rules ...validation.Rule) Middleware[string] {
 	})
 }
 
-// DecodeQuery creates a middleware by decoding (and optionally validating) a value
-// of type A from the query string.
-func DecodeQuery[A any]() Middleware[*A] {
-	return fromConnection(func(c *Connection) data.Result[*A] {
-		var (
-			err error
-			dst = new(A)
-			q   url.Values
-		)
-
-		if q, err = url.ParseQuery(c.R.URL.RawQuery); err != nil {
-			return result.Error[*A](err)
-		}
-
-		if err = decoder.Decode(dst, q); err != nil {
-			return result.Error[*A](err)
-		}
-
-		if err = validation.Validate(dst); err != nil {
-			return result.Error[*A](err)
-		}
-
-		return result.Ok(dst)
-	})
+// DecodeQuery middleware decodes (and optionally validates) a value of type A
+// from the query string.
+func DecodeQuery[A any](c *Connection) data.Result[*A] {
+	var (
+		err error
+		dst = new(A)
+		q   url.Values
+	)
+	if q, err = url.ParseQuery(c.R.URL.RawQuery); err != nil {
+		return result.Error[*A](err)
+	}
+	if err = decoder.Decode(dst, q); err != nil {
+		return result.Error[*A](err)
+	}
+	if err = validation.Validate(dst); err != nil {
+		return result.Error[*A](err)
+	}
+	return result.Ok(dst)
 }
 
 // ToHandlerFunc turns a middleware into a standard http handler function.

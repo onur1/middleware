@@ -152,7 +152,7 @@ func TestMiddleware(t *testing.T) {
 			{
 				desc: "DecodeQuery (ok 1)",
 				m: middleware.Chain(
-					middleware.DecodeQuery[registerForm](),
+					middleware.DecodeQuery[registerForm],
 					middleware.JSON[*registerForm],
 				),
 				req: httptest.NewRequest(http.MethodGet, "/?q=tobiferret", nil),
@@ -163,7 +163,7 @@ func TestMiddleware(t *testing.T) {
 			{
 				desc: "DecodeQuery (ok 2)",
 				m: middleware.Chain(
-					middleware.DecodeQuery[orderForm](),
+					middleware.DecodeQuery[orderForm],
 					middleware.JSON[*orderForm],
 				),
 				req: httptest.NewRequest(http.MethodGet, "/?order=desc&shoe.color=blue&shoe.type=converse", nil),
@@ -175,7 +175,7 @@ func TestMiddleware(t *testing.T) {
 				desc: "DecodeQuery (error)",
 				m: middleware.Chain(
 					middleware.OrElse(
-						middleware.DecodeQuery[orderForm](),
+						middleware.DecodeQuery[orderForm],
 						func(err error) middleware.Middleware[*orderForm] {
 							return middleware.FromResult(func() (*orderForm, error) {
 								return &orderForm{
@@ -194,7 +194,7 @@ func TestMiddleware(t *testing.T) {
 			{
 				desc: "DecodeBody (form)",
 				m: middleware.Chain(
-					middleware.DecodeBody[registerForm](),
+					middleware.DecodeBody[registerForm],
 					middleware.JSON[*registerForm],
 				),
 				req: (func() (r *http.Request) {
@@ -211,7 +211,7 @@ func TestMiddleware(t *testing.T) {
 			{
 				desc: "DecodeBody (json)",
 				m: middleware.Chain(
-					middleware.DecodeBody[registerForm](),
+					middleware.DecodeBody[registerForm],
 					middleware.JSON[*registerForm],
 				),
 				req: (func() (r *http.Request) {
@@ -229,7 +229,7 @@ func TestMiddleware(t *testing.T) {
 				desc: "DecodeBody (json error)",
 				m: middleware.Chain(
 					middleware.OrElse(
-						middleware.DecodeBody[registerForm](),
+						middleware.DecodeBody[registerForm],
 						func(err error) middleware.Middleware[*registerForm] {
 							return middleware.FromResult(func() (*registerForm, error) {
 								return &registerForm{
