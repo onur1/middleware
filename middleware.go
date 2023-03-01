@@ -1,24 +1,29 @@
+// Package middleware implements the Middleware type.
 package middleware
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 
 	validation "github.com/go-ozzo/ozzo-validation"
-	"github.com/gorilla/mux"
 	"github.com/gorilla/schema"
-	"github.com/onur1/middleware/accepts"
+	"github.com/onur1/data"
+	"github.com/onur1/data/result"
 )
+
+// A Connection represents the connection between an HTTP server and a user agent.
+type Connection struct {
+	R   *http.Request
+	W   http.ResponseWriter
+	sub func(func())
+}
+
+// A Middleware represents the result of a computation/mutation on a connection which
+// either yields a value of type A, or fails with an error.
+type Middleware[A any] func(s *Connection) data.Result[A]
 
 // MIME types.
 const (
@@ -37,367 +42,319 @@ const (
 )
 
 var (
-	contentTypeHeaderKey      = "Content-Type"
-	contentLengthHeaderKey    = "Content-Length"
-	contentTypeJSON           = MediaTypeApplicationJSON
-	contentTypeHTML           = MediaTypeTextHTML
-	offeredContentTypes       = []string{contentTypeHTML, contentTypeJSON}
-	defaultAcceptsContentType = MediaTypeApplicationJSON
+	contentTypeJSON = ContentType[any](MediaTypeApplicationJSON)
+	decoder         = schema.NewDecoder()
 )
-
-// ContentType adds the Content-Type header.
-func (m *Middleware) ContentType(mediaType string) {
-	m.Header(contentTypeHeaderKey, mediaType)
-}
-
-// Status sets the response status code.
-func (m *Middleware) Status(status int) {
-	m.responseWriter.WriteHeader(status)
-}
-
-// Header sets a header on the response.
-// Note that, changing a header after a call to WriteHeader has no effect.
-func (m *Middleware) Header(name, value string) {
-	m.responseWriter.Header().Set(name, value)
-}
-
-// Cookie sets a secure cookie with the provided encryption key.
-func (m *Middleware) Cookie(b []byte, opts *http.Cookie, blockKey []byte) error {
-	var out []byte
-
-	if blockKey != nil {
-		block, err := aes.NewCipher(blockKey)
-		if err != nil {
-			return fmt.Errorf("middleware: %s: %v", opts.Name, err)
-		}
-
-		out, err = encrypt(block, b)
-		if err != nil {
-			return fmt.Errorf("middleware: %s: %v", opts.Name, err)
-		}
-	}
-
-	value := base64.URLEncoding.EncodeToString(out)
-
-	http.SetCookie(m.responseWriter, &http.Cookie{
-		Name:     opts.Name,
-		Value:    value,
-		Path:     opts.Path,
-		Domain:   opts.Domain,
-		MaxAge:   opts.MaxAge,
-		Secure:   opts.Secure,
-		HttpOnly: opts.HttpOnly,
-		SameSite: opts.SameSite,
-	})
-
-	return nil
-}
-
-// Send sends the given byte array response without
-// specifying the Content-Type.
-func (m *Middleware) Send(body []byte, code int) error {
-	// Note that, the Content-Length header is always appended,
-	// this is required for drawing the download progress bar.
-	m.Header(contentLengthHeaderKey, strconv.Itoa(len(body)))
-
-	m.Status(code)
-
-	_, err := m.responseWriter.Write(body)
-	if err != nil {
-		return fmt.Errorf("send: %w", err)
-	}
-
-	return nil
-}
-
-// SendJSON sends a JSON object as response.
-// Content-Type header will be set to application/json.
-func (m *Middleware) SendJSON(data interface{}, code int) error {
-	body, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("json: %w", err)
-	}
-
-	m.ContentType(MediaTypeApplicationJSON)
-
-	sendErr := m.Send(body, code)
-	if sendErr != nil {
-		return sendErr
-	}
-
-	return nil
-}
-
-// SendPlainText sends a string as response.
-// Content-Type header will be set to text/plain.
-func (m *Middleware) SendPlainText(s string, code int) error {
-	m.ContentType(MediaTypeTextPlain)
-
-	sendErr := m.Send([]byte(s), code)
-	if sendErr != nil {
-		return sendErr
-	}
-
-	return nil
-}
-
-// SendHTML sends a string as HTML response.
-// Content-Type header will be set to text/html.
-func (m *Middleware) SendHTML(s string, code int) error {
-	m.ContentType(MediaTypeTextHTML)
-
-	sendErr := m.Send([]byte(s), code)
-	if sendErr != nil {
-		return sendErr
-	}
-
-	return nil
-}
-
-type httpErr interface {
-	Status() int
-}
-
-// Destroy ends the response with an error.
-//
-// When a Middleware error conforms to httpErr interface,
-// this method will set the status code to the output of Status() on this error,
-// by default the returned status code will be 500.
-//
-// Error responses are in JSON, if for some reason a JSON object couldn't
-// be serialized, this function will simply write the error to stdout.
-func (m *Middleware) Destroy(err error) {
-	var status int
-
-	switch e := err.(type) {
-	case httpErr:
-		status = e.Status()
-	default:
-		status = http.StatusInternalServerError
-	}
-
-	sendErr := m.SendJSON(err, status)
-	if sendErr != nil {
-		fmt.Println(fmt.Errorf("middleware: %w", sendErr).Error())
-	}
-}
-
-// Redirect redirects this request to the given URL with the given 3xx code.
-func (m *Middleware) Redirect(url string, code int) {
-	http.Redirect(m.responseWriter, m.request, url, code)
-}
-
-func (m *Middleware) NegotiateContentEncoding(offers []string) string {
-	return accepts.NegotiateContentEncoding(m.request, offers)
-}
-
-func (m *Middleware) NegotiateContentType(offers []string, defaultOffer string) string {
-	return accepts.NegotiateContentType(m.request, offers, defaultOffer)
-}
-
-func (m *Middleware) AcceptsHTML() bool {
-	return m.request.Header.Get(contentTypeHeaderKey) != contentTypeJSON &&
-		m.NegotiateContentType(
-			offeredContentTypes,
-			defaultAcceptsContentType,
-		) == contentTypeHTML
-}
-
-func (m *Middleware) GetRequest() *http.Request {
-	return m.request
-}
-
-func (m *Middleware) GetResponseWriter() http.ResponseWriter {
-	return m.responseWriter
-}
-
-//
-// decode
-//
-
-var decoder = schema.NewDecoder()
 
 func init() {
 	decoder.IgnoreUnknownKeys(true)
 	decoder.SetAliasTag("json")
 }
 
-func validateString(s string, rules ...validation.Rule) (string, error) {
-	a := strings.TrimSpace(s)
+// ErrUnknownContentType is thrown by DecodeBody when a Content-Type
+// is not one of "application/x-www-form-urlencoded" or "application/json".
+var ErrUnknownContentType = errors.New("unknown content-type")
 
-	err := validation.Validate(a, rules...)
-	if err != nil {
-		return a, err
+// Map creates a middleware by applying a function on a succeeding middleware.
+func Map[A, B any](fa Middleware[A], f func(A) B) Middleware[B] {
+	return func(s *Connection) data.Result[B] {
+		return result.Map(
+			fa(s),
+			f,
+		)
 	}
-
-	return a, nil
 }
 
-func (m *Middleware) ValidateHeader(name string, rules ...validation.Rule) (string, error) {
-	return validateString(m.request.Header.Get(name), rules...)
+// MapError creates a middleware by applying a function on a failing middleware.
+func MapError[A any](fa Middleware[A], f func(error) error) Middleware[A] {
+	return func(s *Connection) data.Result[A] {
+		return result.MapError(
+			fa(s),
+			f,
+		)
+	}
 }
 
-func (m *Middleware) ValidateParam(name string, rules ...validation.Rule) (string, error) {
-	return validateString(mux.Vars(m.request)[name], rules...)
+// Ap creates a middleware by applying a function contained in the first middleware
+// on the value contained in the second middleware.
+func Ap[A, B any](fab Middleware[func(A) B], fa Middleware[A]) Middleware[B] {
+	return func(s *Connection) data.Result[B] {
+		return result.Chain(fab(s), func(ab func(A) B) data.Result[B] {
+			return result.Map(fa(s), ab)
+		})
+	}
 }
 
-func (m *Middleware) ValidateCookie(name string, rules ...validation.Rule) (string, error) {
-	q, err := m.request.Cookie(name)
-	if err != nil {
-		return "", err
+// Chain creates a middleware which combines two results in sequence, using the
+// return value of one middleware to determine the next one.
+func Chain[A, B any](ma Middleware[A], f func(A) Middleware[B]) Middleware[B] {
+	return func(s *Connection) data.Result[B] {
+		return result.Chain(ma(s), func(a A) data.Result[B] {
+			return f(a)(s)
+		})
 	}
-
-	return validateString(q.Value, rules...)
 }
 
-func (m *Middleware) DecodeQuery(dst validation.Validatable) error {
-	q, err := url.ParseQuery(m.request.URL.RawQuery)
-	if err != nil {
-		return err
-	}
-
-	err = decoder.Decode(dst, q)
-	if err != nil {
-		return err
-	}
-
-	err = validation.Validate(dst)
-	if err != nil {
-		return err
-	}
-
-	return nil
+// ApFirst creates a middleware by combining two effectful computations on a
+// connection, keeping only the result of the first.
+func ApFirst[A, B any](fa Middleware[A], fb Middleware[B]) Middleware[A] {
+	return Ap(Map(fa, fst[A, B]), fb)
 }
 
-func (m *Middleware) DecodeBody(dst validation.Validatable) error {
-	contentType := m.request.Header.Get("Content-Type")
+// ApSecond creates a middleware by combining two effectful computations on a
+// connection, keeping only the result of the second.
+func ApSecond[A, B any](fa Middleware[A], fb Middleware[B]) Middleware[B] {
+	return Ap(Map(fa, snd[A, B]), fb)
+}
 
-	var err error
+// ChainFirst composes two middlewares in sequence, using the return value of one
+// to determine the next one, keeping only the result of the first one.
+func ChainFirst[A, B any](ma Middleware[A], f func(A) Middleware[B]) Middleware[A] {
+	return Chain(ma, func(a A) Middleware[A] {
+		return Map(f(a), func(_ B) A {
+			return a
+		})
+	})
+}
 
-	switch contentType {
-	case MediaTypeFormURLEncoded:
-		err = m.request.ParseForm()
+// FromRequest creates a middleware for reading a request by applying a function
+// on a connection request that either yields a value of type A, or fails with an error.
+func FromRequest[A any](f func(c *http.Request) data.Result[A]) Middleware[A] {
+	return fromConnection(func(c *Connection) data.Result[A] {
+		return f(c.R)
+	})
+}
+
+// OrElse creates a middleware for recovering from errors.
+func OrElse[A any](ma Middleware[A], onError func(error) Middleware[A]) Middleware[A] {
+	return func(c *Connection) data.Result[A] {
+		return result.OrElse(ma(c), func(err error) data.Result[A] {
+			return onError(err)(c)
+		})
+	}
+}
+
+func FilterOrElse[A any](ma Middleware[A], predicate data.Predicate[A], onFalse func(A) error) Middleware[A] {
+	return Chain(ma, func(a A) Middleware[A] {
+		return func(_ *Connection) data.Result[A] {
+			if predicate(a) {
+				return result.Ok(a)
+			} else {
+				return result.Error[A](onFalse(a))
+			}
+		}
+	})
+}
+
+func fromConnection[A any](f func(c *Connection) data.Result[A]) Middleware[A] {
+	return func(c *Connection) data.Result[A] {
+		return f(c)
+	}
+}
+
+// ModifyResponse creates a middleware for mutating response by applying a function
+// on a response writer that never fails.
+func ModifyResponse[A any](f func(w http.ResponseWriter)) Middleware[A] {
+	return modifyConnection[A](func(c *Connection) {
+		f(c.W)
+	})
+}
+
+func modifyConnection[A any](f func(c *Connection)) Middleware[A] {
+	return func(c *Connection) data.Result[A] {
+		sub := c.sub
+		c.sub = func(next func()) {
+			sub(func() {
+				f(c)
+				next()
+			})
+		}
+		return result.Zero[A]
+	}
+}
+
+// Status creates a middleware that sets a response status code.
+func Status[A any](status int) Middleware[any] {
+	return modifyConnection[any](func(c *Connection) {
+		c.W.WriteHeader(status)
+	})
+}
+
+// Header creates a middleware that sets a header on the response.
+// Note that, changing a header after a call to Status has no effect.
+func Header[A any](name, value string) Middleware[any] {
+	return modifyConnection[any](func(c *Connection) {
+		c.W.Header().Set(name, value)
+	})
+}
+
+// Redirect creates a middleware for redirecting a request to the given URL
+// with the given 3xx code.
+func Redirect[A any](url string, code int) Middleware[any] {
+	return modifyConnection[any](func(c *Connection) {
+		http.Redirect(c.W, c.R, url, code)
+	})
+}
+
+// Write creates a middleware for sending the given byte array response
+// without specifying the Content-Type.
+func Write[A any](body []byte) Middleware[any] {
+	return modifyConnection[any](func(c *Connection) {
+		_, err := c.W.Write(body)
 		if err != nil {
-			return err
+			fmt.Printf("write:  %v\n", err)
+		}
+	})
+}
+
+// HTML creates a middleware that sends a string as HTML response.
+func HTML[A any](html string) Middleware[any] {
+	return ApSecond(
+		ContentType[any](MediaTypeTextHTML),
+		Write[any]([]byte(html)),
+	)
+}
+
+// PlainText creates a middleware that sends a plain text as response.
+func PlainText[A any](text string) Middleware[any] {
+	return ApSecond(
+		ContentType[any](MediaTypeTextPlain),
+		Write[any]([]byte(text)),
+	)
+}
+
+// FromResult converts a function, which takes no parameters and returns
+// a value of type A along with an error, into a Middleware.
+func FromResult[A any](ra data.Result[A]) Middleware[A] {
+	return func(_ *Connection) data.Result[A] {
+		return ra
+	}
+}
+
+// JSON sends a JSON object as response.
+func JSON[A any](d A) Middleware[any] {
+	return Chain(
+		ApFirst(FromResult(marshalJSON(d)), contentTypeJSON),
+		Write[any],
+	)
+}
+
+// ContentType creates a middleware which sets the Content-Type header on
+// a response.
+func ContentType[A any](contentType string) Middleware[A] {
+	return modifyConnection[A](func(c *Connection) {
+		c.W.Header().Set("Content-Type", contentType)
+	})
+}
+
+// DecodeMethod creates a Middleware by applying a function on a request method.
+func DecodeMethod[A any](f func(string) data.Result[A]) Middleware[A] {
+	return fromConnection(func(c *Connection) data.Result[A] {
+		return f(c.R.Method)
+	})
+}
+
+// DecodeBody creates a Middleware which decodes (and optionally validates)
+// the request body into a value of type A.
+func DecodeBody[A any]() Middleware[*A] {
+	return fromConnection(func(c *Connection) data.Result[*A] {
+		var (
+			err         error
+			dst         = new(A)
+			contentType = c.R.Header.Get("Content-Type")
+		)
+
+		switch contentType {
+		case MediaTypeFormURLEncoded:
+			if err = c.R.ParseForm(); err != nil {
+				return result.Error[*A](err)
+			}
+			if err = decoder.Decode(dst, c.R.PostForm); err != nil {
+				return result.Error[*A](err)
+			}
+		case MediaTypeApplicationJSON:
+			if err = json.NewDecoder(c.R.Body).Decode(dst); err != nil {
+				return result.Error[*A](err)
+			}
+		default:
+			return result.Error[*A](ErrUnknownContentType)
 		}
 
-		err = decoder.Decode(dst, m.request.PostForm)
-		if err != nil {
-			return err
+		if err = validation.Validate(dst); err != nil {
+			return result.Error[*A](err)
 		}
-	case MediaTypeApplicationJSON:
-		err = json.NewDecoder(m.request.Body).Decode(dst)
-		if err != nil {
-			return err
+
+		return result.Ok(dst)
+	})
+}
+
+// DecodeQuery creates a middleware by decoding (and optionally validating) a value
+// of type A from the query string.
+func DecodeQuery[A any]() Middleware[*A] {
+	return fromConnection(func(c *Connection) data.Result[*A] {
+		var (
+			err error
+			dst = new(A)
+			q   url.Values
+		)
+
+		if q, err = url.ParseQuery(c.R.URL.RawQuery); err != nil {
+			return result.Error[*A](err)
 		}
-	default:
-		return errors.New("unknown content-type")
-	}
 
-	err = validation.Validate(dst)
-	if err != nil {
-		return err
-	}
+		if err = decoder.Decode(dst, q); err != nil {
+			return result.Error[*A](err)
+		}
 
-	return nil
+		if err = validation.Validate(dst); err != nil {
+			return result.Error[*A](err)
+		}
+
+		return result.Ok(dst)
+	})
 }
 
-func (m *Middleware) DecodeBoolParam(name string, rules ...validation.Rule) (bool, error) {
-	a, err := m.ValidateParam(name, rules...)
-	if err != nil {
-		return false, err
-	}
+// ToHandlerFunc turns a middleware into a standard http handler function.
+func ToHandlerFunc[A any](ma Middleware[A], onError func(err error, c *Connection)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c := &Connection{
+			R:   r,
+			W:   w,
+			sub: sub,
+		}
+		result.Fork(ma(c), func(err error) {
+			onError(err, c)
+		}, func(_ A) {
+			c.sub(noop) // run effects
 
-	b, err := strconv.ParseBool(a)
-	if err != nil {
-		return false, err
-	}
-
-	return b, nil
-}
-
-func (m *Middleware) DecodeFloatParam(name string, rules ...validation.Rule) (float64, error) {
-	a, err := m.ValidateParam(name, rules...)
-	if err != nil {
-		return 0, err
-	}
-
-	b, err := strconv.ParseFloat(a, 64)
-	if err != nil {
-		return 0, err
-	}
-
-	return b, nil
-}
-
-func (m *Middleware) DecodeIntParam(name string, rules ...validation.Rule) (int64, error) {
-	a, err := m.ValidateParam(name, rules...)
-	if err != nil {
-		return 0, err
-	}
-
-	b, err := strconv.ParseInt(a, 0, 10)
-	if err != nil {
-		return 0, err
-	}
-
-	return b, nil
-}
-
-func (m *Middleware) DecodeUintParam(name string, rules ...validation.Rule) (uint64, error) {
-	a, err := m.ValidateParam(name, rules...)
-	if err != nil {
-		return 0, err
-	}
-
-	b, err := strconv.ParseUint(a, 10, 0)
-	if err != nil {
-		return 0, err
-	}
-
-	return b, nil
-}
-
-type Middleware struct {
-	request        *http.Request
-	responseWriter http.ResponseWriter
-}
-
-func (m *Middleware) Reset(w http.ResponseWriter, r *http.Request) {
-	*m = Middleware{
-		request:        r,
-		responseWriter: w,
+			c.sub = nil
+			c.W = nil
+			c.R = nil
+		})
 	}
 }
 
-func NewMiddleware(w http.ResponseWriter, r *http.Request) *Middleware {
-	m := new(Middleware)
-	m.Reset(w, r)
-	return m
+func marshalJSON(v any) data.Result[[]byte] {
+	return func() ([]byte, error) {
+		return json.Marshal(v)
+	}
 }
 
-func random(length int) ([]byte, error) {
-	k := make([]byte, length)
-	if _, err := io.ReadFull(rand.Reader, k); err != nil {
-		return nil, err
+func fst[A, B any](a A) func(B) A {
+	return func(_ B) A {
+		return a
 	}
-	return k, nil
 }
 
-var ErrGenerateIV = errors.New("middleware: could not generate the encryption iv")
-
-func encrypt(block cipher.Block, value []byte) ([]byte, error) {
-	iv, err := random(block.BlockSize())
-	if err != nil {
-		return nil, ErrGenerateIV
+func snd[A, B any](_ A) func(B) B {
+	return func(b B) B {
+		return b
 	}
+}
 
-	if iv == nil {
-		return nil, ErrGenerateIV
-	}
+func noop() {
+}
 
-	s := cipher.NewCTR(block, iv)
-	s.XORKeyStream(value, value)
-
-	return append(iv, value...), nil
+func sub(f func()) {
+	f()
 }

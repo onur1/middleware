@@ -11,19 +11,39 @@ import (
 
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/go-ozzo/ozzo-validation/is"
-	"github.com/gorilla/mux"
 	"github.com/onur1/middleware"
 	"github.com/stretchr/testify/assert"
 )
 
-func newMiddleware(r *http.Request) (*middleware.Middleware, *httptest.ResponseRecorder) {
-	w := httptest.NewRecorder()
+type testCase[A any] struct {
+	desc string
+	m    middleware.Middleware[A]
+	req  *http.Request
+	fn   func(*testing.T, *http.Response, *httptest.ResponseRecorder)
+}
 
-	return middleware.NewMiddleware(w, r), w
+func runEffects[A any](ma middleware.Middleware[A], w *httptest.ResponseRecorder) func(*http.Request) *http.Response {
+	return func(r *http.Request) *http.Response {
+		middleware.ToHandlerFunc(ma, func(err error, _ *middleware.Connection) {
+			panic(err)
+		})(w, r)
+		res := w.Result()
+		defer res.Body.Close()
+		return res
+	}
+}
+
+func runTestCases[A any](testCases []testCase[A], t *testing.T) {
+	for _, tC := range testCases {
+		t.Run(tC.desc, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			tC.fn(t, runEffects(tC.m, w)(tC.req), w)
+		})
+	}
 }
 
 type registerForm struct {
-	Q string `schema:"q"`
+	Q string `json:"q"`
 }
 
 func (q registerForm) Validate() error {
@@ -31,8 +51,8 @@ func (q registerForm) Validate() error {
 }
 
 type shoe struct {
-	Color string `schema:"color"`
-	Type  string `schema:"type"`
+	Color string `json:"color"`
+	Type  string `json:"type"`
 }
 
 func (q shoe) Validate() error {
@@ -44,8 +64,8 @@ func (q shoe) Validate() error {
 }
 
 type orderForm struct {
-	Order string `schema:"order"`
-	Shoe  shoe   `schema:"shoe"`
+	Order string `json:"order"`
+	Shoe  shoe   `json:"shoe"`
 }
 
 func (q orderForm) Validate() error {
@@ -56,414 +76,182 @@ func (q orderForm) Validate() error {
 	)
 }
 
-func TestStatus(t *testing.T) {
-	t.Run("should write the status code", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		m.Status(349)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		assert.Equal(t, 349, res.StatusCode)
-	})
-}
-
-func TestHeader(t *testing.T) {
-	t.Run("should write the headers", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		m.Header("X-Name", "Value")
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		assert.Equal(t, 200, res.StatusCode)
-		assert.Equal(t, "Value", res.Header.Get("X-Name"))
-	})
-}
-
-func TestSend(t *testing.T) {
-	t.Run("should send the content", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		_ = m.Send([]byte("<h1>Hello world!</h1>"), http.StatusOK)
-
-		assert.Equal(t, "<h1>Hello world!</h1>", w.Body.String())
-	})
-}
-
-func TestJSON(t *testing.T) {
-	t.Run("should add the proper header and send the json content", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		_ = m.SendJSON(map[string]int{"a": 1}, http.StatusOK)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		body, _ := ioutil.ReadAll(res.Body)
-
-		assert.Equal(t, "application/json", res.Header.Get("Content-Type"))
-		assert.Equal(t, `{"a":1}`, string(body))
-	})
-}
-
-func TestSendPlainText(t *testing.T) {
-	t.Run("should add the proper header and send the json content", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		_ = m.SendPlainText("Hello, world!", http.StatusOK)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		body, _ := ioutil.ReadAll(res.Body)
-
-		assert.Equal(t, "text/plain", res.Header.Get("Content-Type"))
-		assert.Equal(t, "Hello, world!", string(body))
-	})
-}
-
-func TestContentType(t *testing.T) {
-	t.Run("should add the content-type header", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		m.ContentType(middleware.MediaTypeApplicationXML)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		assert.Equal(t, "application/xml", res.Header.Get("Content-Type"))
-	})
-}
-
-func TestRedirect(t *testing.T) {
-	t.Run("should redirect and add the correct status / header", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, w := newMiddleware(r)
-
-		m.Redirect("/users", 302)
-
-		res := w.Result()
-		defer res.Body.Close()
-
-		assert.Equal(t, "/users", res.Header.Get("Location"))
-		assert.Equal(t, 302, res.StatusCode)
-	})
-}
-
-func TestDecodeParam(t *testing.T) {
-	t.Run("should validate an int param (success)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "-42"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.DecodeIntParam("id")
-
-		assert.NoError(t, err)
-		assert.Equal(t, int64(-42), id)
-	})
-
-	t.Run("should validate an int param (failure)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "abc"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.DecodeIntParam("id")
-
-		assert.EqualError(t, err, "strconv.ParseInt: parsing \"abc\": invalid syntax")
-	})
-
-	t.Run("should validate a uint param (success)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "42"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.DecodeUintParam("id")
-
-		assert.NoError(t, err)
-		assert.Equal(t, uint64(42), id)
-	})
-
-	t.Run("should validate a uint param (failure)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "-42"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.DecodeUintParam("id")
-
-		assert.EqualError(t, err, "strconv.ParseUint: parsing \"-42\": invalid syntax")
-	})
-
-	t.Run("should validate a float param (success)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "42.2442"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.DecodeFloatParam("id")
-
-		assert.NoError(t, err)
-		assert.Equal(t, float64(42.2442), id)
-	})
-
-	t.Run("should validate a float param (failure)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "abc"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.DecodeFloatParam("id")
-
-		assert.EqualError(t, err, "strconv.ParseFloat: parsing \"abc\": invalid syntax")
-	})
-
-	t.Run("should validate a bool param (success)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "true"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.DecodeBoolParam("id")
-
-		assert.NoError(t, err)
-		assert.Equal(t, true, id)
-	})
-
-	t.Run("should validate a float param (failure 1)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "abc"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.DecodeBoolParam("id")
-
-		assert.EqualError(t, err, "strconv.ParseBool: parsing \"abc\": invalid syntax")
-	})
-
-	t.Run("should validate a float param (failure 2)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.DecodeBoolParam("id")
-
-		assert.EqualError(t, err, "strconv.ParseBool: parsing \"\": invalid syntax")
-	})
-
-	t.Run("should validate a string param (success)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": "value"},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.ValidateParam("id", validation.Required)
-
-		assert.NoError(t, err)
-		assert.Equal(t, "value", id)
-	})
-
-	t.Run("should validate a string param (failure)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{"id": ""},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.ValidateParam("id", validation.Required, validation.Length(1, 2))
-
-		assert.EqualError(t, err, "cannot be blank")
-	})
-
-	t.Run("should validate an optional string param", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{},
-		)
-
-		m, _ := newMiddleware(r)
-
-		id, err := m.ValidateParam("id")
-
-		assert.NoError(t, err)
-		assert.Equal(t, "", id)
-	})
-
-	t.Run("should validate a required param (failure)", func(t *testing.T) {
-		r := mux.SetURLVars(
-			httptest.NewRequest(http.MethodGet, "/", nil),
-			map[string]string{},
-		)
-
-		m, _ := newMiddleware(r)
-
-		_, err := m.ValidateParam("id", validation.Required)
-
-		assert.EqualError(t, err, "cannot be blank")
-	})
-}
-
-func TestDecodeQuery(t *testing.T) {
-	t.Run("should validate a query (success 1)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/?q=tobiferret", nil)
-		m, _ := newMiddleware(r)
-
-		dst := &registerForm{}
-
-		err := m.DecodeQuery(dst)
-
-		assert.NoError(t, err)
-		assert.Equal(t, "tobiferret", dst.Q)
-	})
-
-	t.Run("should validate a query (success 2)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/?order=desc&shoe.color=blue&shoe.type=converse", nil)
-		m, _ := newMiddleware(r)
-
-		dst := &orderForm{}
-
-		err := m.DecodeQuery(dst)
-
-		assert.NoError(t, err)
-		assert.Equal(t, &orderForm{
-			Order: "desc",
-			Shoe: shoe{
-				Color: "blue",
-				Type:  "converse",
+func TestMiddleware(t *testing.T) {
+	runTestCases(
+		[]testCase[any]{
+			{
+				desc: "Status",
+				m:    middleware.Status[any](349),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, 349, res.StatusCode)
+				},
 			},
-		}, dst)
-	})
-
-	t.Run("should validate a query (failure 1)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/?q=tobi+ferret", nil)
-		m, _ := newMiddleware(r)
-
-		dst := &registerForm{}
-
-		err := m.DecodeQuery(dst)
-
-		assert.EqualError(t, err, "Q: must contain English letters and digits only.")
-	})
-
-	t.Run("should validate a query (failure 2)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/?order=desc&shoe.color=blue&shoe.type=x", nil)
-		m, _ := newMiddleware(r)
-
-		dst := &orderForm{}
-
-		err := m.DecodeQuery(dst)
-
-		assert.EqualError(t, err, "Shoe: (Type: the length must be between 2 and 8.).")
-	})
-}
-
-func TestDecodeHeader(t *testing.T) {
-	t.Run("should validate a header (success)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, _ := newMiddleware(r)
-
-		r.Header.Set("X-Name", "tobi ferret")
-
-		a, err := m.ValidateHeader("X-Name")
-
-		assert.NoError(t, err)
-		assert.Equal(t, "tobi ferret", a)
-	})
-
-	t.Run("should validate a header (failure)", func(t *testing.T) {
-		r := httptest.NewRequest(http.MethodGet, "/", nil)
-		m, _ := newMiddleware(r)
-
-		_, err := m.ValidateHeader("X-Name", validation.Required)
-
-		assert.EqualError(t, err, "cannot be blank")
-	})
-}
-
-func TestDecodeBody(t *testing.T) {
-	t.Run("should validate the form body (success)", func(t *testing.T) {
-		data := url.Values{}
-
-		data.Set("q", "foo")
-
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(data.Encode()))
-
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-		m, _ := newMiddleware(r)
-
-		dst := &registerForm{}
-
-		err := m.DecodeBody(dst)
-		assert.NoError(t, err)
-
-		assert.Equal(t, "foo", dst.Q)
-	})
-
-	t.Run("should validate the json body (success)", func(t *testing.T) {
-		body, err := json.Marshal(map[string]string{"q": "mytoken"})
-		assert.NoError(t, err)
-
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
-
-		r.Header.Set("Content-Type", "application/json")
-
-		m, _ := newMiddleware(r)
-
-		dst := &registerForm{}
-
-		err = m.DecodeBody(dst)
-		assert.NoError(t, err)
-
-		assert.Equal(t, "mytoken", dst.Q)
-	})
-
-	t.Run("should validate the json body (failure)", func(t *testing.T) {
-		body, err := json.Marshal(map[string]string{"z": "mytoken"})
-		assert.NoError(t, err)
-
-		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
-
-		r.Header.Set("Content-Type", "application/json")
-
-		m, _ := newMiddleware(r)
-
-		dst := &registerForm{}
-
-		err = m.DecodeBody(dst)
-		assert.EqualError(t, err, "Q: cannot be blank.")
-	})
+			{
+				desc: "Header",
+				m:    middleware.Header[any]("X-Name", "Value"),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, "Value", res.Header.Get("X-Name"))
+				},
+			},
+			{
+				desc: "ContentType",
+				m:    middleware.ContentType[any](middleware.MediaTypeApplicationJSON),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, middleware.MediaTypeApplicationJSON, res.Header.Get("Content-Type"))
+				},
+			},
+			{
+				desc: "Write",
+				m:    middleware.Write[any]([]byte("foobarbaz")),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, "foobarbaz", w.Body.String())
+				},
+			},
+			{
+				desc: "JSON",
+				m:    middleware.JSON[any](map[string]int{"a": 1}),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					body, _ := ioutil.ReadAll(res.Body)
+					assert.Equal(t, `{"a":1}`, string(body))
+					assert.Equal(t, middleware.MediaTypeApplicationJSON, res.Header.Get("Content-Type"))
+				},
+			},
+			{
+				desc: "PlainText",
+				m:    middleware.PlainText[any]("quuqux"),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					body, _ := ioutil.ReadAll(res.Body)
+					assert.Equal(t, "quuqux", string(body))
+					assert.Equal(t, middleware.MediaTypeTextPlain, res.Header.Get("Content-Type"))
+				},
+			},
+			{
+				desc: "HTML",
+				m:    middleware.HTML[any]("<h1>It works!</h1>"),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, "<h1>It works!</h1>", w.Body.String())
+					assert.Equal(t, middleware.MediaTypeTextHTML, res.Header.Get("Content-Type"))
+				},
+			},
+			{
+				desc: "Redirect",
+				m:    middleware.Redirect[any]("/users", 302),
+				req:  httptest.NewRequest(http.MethodGet, "/", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, "/users", res.Header.Get("Location"))
+					assert.Equal(t, 302, res.StatusCode)
+				},
+			},
+			{
+				desc: "DecodeQuery (ok 1)",
+				m: middleware.Chain(
+					middleware.DecodeQuery[registerForm](),
+					middleware.JSON[*registerForm],
+				),
+				req: httptest.NewRequest(http.MethodGet, "/?q=tobiferret", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"q":"tobiferret"}`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeQuery (ok 2)",
+				m: middleware.Chain(
+					middleware.DecodeQuery[orderForm](),
+					middleware.JSON[*orderForm],
+				),
+				req: httptest.NewRequest(http.MethodGet, "/?order=desc&shoe.color=blue&shoe.type=converse", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"order":"desc","shoe":{"color":"blue","type":"converse"}}`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeQuery (error)",
+				m: middleware.Chain(
+					middleware.OrElse(
+						middleware.DecodeQuery[orderForm](),
+						func(err error) middleware.Middleware[*orderForm] {
+							return middleware.FromResult(func() (*orderForm, error) {
+								return &orderForm{
+									Order: err.Error(),
+								}, nil
+							})
+						},
+					),
+					middleware.JSON[*orderForm],
+				),
+				req: httptest.NewRequest(http.MethodGet, "/?order=desc&shoe.color=blue&shoe.type=x", nil),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"order":"shoe: (type: the length must be between 2 and 8.).","shoe":{"color":"","type":""}}`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeBody (form)",
+				m: middleware.Chain(
+					middleware.DecodeBody[registerForm](),
+					middleware.JSON[*registerForm],
+				),
+				req: (func() (r *http.Request) {
+					data := url.Values{}
+					data.Set("q", "fooqux")
+					r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(data.Encode()))
+					r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"q":"fooqux"}`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeBody (json)",
+				m: middleware.Chain(
+					middleware.DecodeBody[registerForm](),
+					middleware.JSON[*registerForm],
+				),
+				req: (func() (r *http.Request) {
+					body, err := json.Marshal(map[string]string{"q": "mytoken"})
+					assert.NoError(t, err)
+					r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+					r.Header.Set("Content-Type", "application/json")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"q":"mytoken"}`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeBody (json error)",
+				m: middleware.Chain(
+					middleware.OrElse(
+						middleware.DecodeBody[registerForm](),
+						func(err error) middleware.Middleware[*registerForm] {
+							return middleware.FromResult(func() (*registerForm, error) {
+								return &registerForm{
+									Q: err.Error(),
+								}, nil
+							})
+						},
+					),
+					middleware.JSON[*registerForm],
+				),
+				req: (func() (r *http.Request) {
+					body, err := json.Marshal(map[string]string{"z": "mytoken"})
+					assert.NoError(t, err)
+					r = httptest.NewRequest(http.MethodPost, "/", strings.NewReader(string(body)))
+					r.Header.Set("Content-Type", "application/json")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `{"q":"q: cannot be blank."}`, w.Body.String())
+				},
+			},
+		},
+		t,
+	)
 }

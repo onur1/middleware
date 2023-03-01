@@ -1,3 +1,3 @@
 # middleware
 
-http middleware util.
+type-safe composable HTTP middleware architecture.
