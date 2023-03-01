@@ -174,7 +174,7 @@ func modifyConnection[A any](f func(c *Connection)) Middleware[A] {
 }
 
 // Status creates a middleware that sets a response status code.
-func Status[A any](status int) Middleware[any] {
+func Status(status int) Middleware[any] {
 	return modifyConnection[any](func(c *Connection) {
 		c.W.WriteHeader(status)
 	})
@@ -182,7 +182,7 @@ func Status[A any](status int) Middleware[any] {
 
 // Header creates a middleware that sets a header on the response.
 // Note that, changing a header after a call to Status has no effect.
-func Header[A any](name, value string) Middleware[any] {
+func Header(name, value string) Middleware[any] {
 	return modifyConnection[any](func(c *Connection) {
 		c.W.Header().Set(name, value)
 	})
@@ -190,7 +190,7 @@ func Header[A any](name, value string) Middleware[any] {
 
 // Redirect creates a middleware for redirecting a request to the given URL
 // with the given 3xx code.
-func Redirect[A any](url string, code int) Middleware[any] {
+func Redirect(url string, code int) Middleware[any] {
 	return modifyConnection[any](func(c *Connection) {
 		http.Redirect(c.W, c.R, url, code)
 	})
@@ -198,7 +198,7 @@ func Redirect[A any](url string, code int) Middleware[any] {
 
 // Write creates a middleware for sending the given byte array response
 // without specifying the Content-Type.
-func Write[A any](body []byte) Middleware[any] {
+func Write(body []byte) Middleware[any] {
 	return modifyConnection[any](func(c *Connection) {
 		_, err := c.W.Write(body)
 		if err != nil {
@@ -208,18 +208,18 @@ func Write[A any](body []byte) Middleware[any] {
 }
 
 // HTML creates a middleware that sends a string as HTML response.
-func HTML[A any](html string) Middleware[any] {
+func HTML(html string) Middleware[any] {
 	return ApSecond(
 		ContentType[any](MediaTypeTextHTML),
-		Write[any]([]byte(html)),
+		Write([]byte(html)),
 	)
 }
 
 // PlainText creates a middleware that sends a plain text as response.
-func PlainText[A any](text string) Middleware[any] {
+func PlainText(text string) Middleware[any] {
 	return ApSecond(
 		ContentType[any](MediaTypeTextPlain),
-		Write[any]([]byte(text)),
+		Write([]byte(text)),
 	)
 }
 
@@ -235,7 +235,7 @@ func FromResult[A any](ra data.Result[A]) Middleware[A] {
 func JSON[A any](d A) Middleware[any] {
 	return Chain(
 		ApFirst(FromResult(marshalJSON(d)), contentTypeJSON),
-		Write[any],
+		Write,
 	)
 }
 

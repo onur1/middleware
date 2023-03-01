@@ -81,7 +81,7 @@ func TestMiddleware(t *testing.T) {
 		[]testCase[any]{
 			{
 				desc: "Status",
-				m:    middleware.Status[any](349),
+				m:    middleware.Status(349),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					assert.Equal(t, 349, res.StatusCode)
@@ -89,7 +89,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			{
 				desc: "Header",
-				m:    middleware.Header[any]("X-Name", "Value"),
+				m:    middleware.Header("X-Name", "Value"),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					assert.Equal(t, "Value", res.Header.Get("X-Name"))
@@ -105,7 +105,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			{
 				desc: "Write",
-				m:    middleware.Write[any]([]byte("foobarbaz")),
+				m:    middleware.Write([]byte("foobarbaz")),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					assert.Equal(t, "foobarbaz", w.Body.String())
@@ -123,7 +123,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			{
 				desc: "PlainText",
-				m:    middleware.PlainText[any]("quuqux"),
+				m:    middleware.PlainText("quuqux"),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					body, _ := ioutil.ReadAll(res.Body)
@@ -133,7 +133,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			{
 				desc: "HTML",
-				m:    middleware.HTML[any]("<h1>It works!</h1>"),
+				m:    middleware.HTML("<h1>It works!</h1>"),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					assert.Equal(t, "<h1>It works!</h1>", w.Body.String())
@@ -142,7 +142,7 @@ func TestMiddleware(t *testing.T) {
 			},
 			{
 				desc: "Redirect",
-				m:    middleware.Redirect[any]("/users", 302),
+				m:    middleware.Redirect("/users", 302),
 				req:  httptest.NewRequest(http.MethodGet, "/", nil),
 				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
 					assert.Equal(t, "/users", res.Header.Get("Location"))
