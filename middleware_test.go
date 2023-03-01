@@ -251,6 +251,56 @@ func TestMiddleware(t *testing.T) {
 					assert.Equal(t, `{"q":"q: cannot be blank."}`, w.Body.String())
 				},
 			},
+			{
+				desc: "DecodeHeader",
+				m: middleware.Chain(
+					middleware.DecodeHeader("X-Some"),
+					middleware.PlainText,
+				),
+				req: (func() (r *http.Request) {
+					r = httptest.NewRequest(http.MethodGet, "/", nil)
+					r.Header.Set("X-Some", "tobi ferret")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `tobi ferret`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeHeader (with rules)",
+				m: middleware.Chain(
+					middleware.DecodeHeader("X-Some", validation.Length(5, 20)),
+					middleware.PlainText,
+				),
+				req: (func() (r *http.Request) {
+					r = httptest.NewRequest(http.MethodGet, "/", nil)
+					r.Header.Set("X-Some", "tobi ferret")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `tobi ferret`, w.Body.String())
+				},
+			},
+			{
+				desc: "DecodeHeader (rules error)",
+				m: middleware.OrElse(
+					middleware.Chain(
+						middleware.DecodeHeader("X-Some", validation.Length(5, 20)),
+						middleware.PlainText,
+					),
+					func(err error) middleware.Middleware[any] {
+						return middleware.PlainText(err.Error())
+					},
+				),
+				req: (func() (r *http.Request) {
+					r = httptest.NewRequest(http.MethodGet, "/", nil)
+					r.Header.Set("X-Some", "tobi")
+					return
+				})(),
+				fn: func(t *testing.T, res *http.Response, w *httptest.ResponseRecorder) {
+					assert.Equal(t, `the length must be between 5 and 20`, w.Body.String())
+				},
+			},
 		},
 		t,
 	)

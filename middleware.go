@@ -288,6 +288,16 @@ func DecodeBody[A any]() Middleware[*A] {
 	})
 }
 
+// DecodeHeader creates a middleware by validating a string value from a header.
+func DecodeHeader(name string, rules ...validation.Rule) Middleware[string] {
+	return fromConnection(func(c *Connection) data.Result[string] {
+		return func() (string, error) {
+			s := c.R.Header.Get(name)
+			return s, validation.Validate(s, rules...)
+		}
+	})
+}
+
 // DecodeQuery creates a middleware by decoding (and optionally validating) a value
 // of type A from the query string.
 func DecodeQuery[A any]() Middleware[*A] {
