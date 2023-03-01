@@ -127,3 +127,7 @@ Output:
   "message": "Hello, onur1!"
 }
 ```
+
+## Credits
+
+Inspired by [purescript-hyper](https://github.com/purescript-hyper/hyper) and [hyper-ts](https://github.com/DenisFrezzato/hyper-ts).
