@@ -255,8 +255,8 @@ func DecodeMethod[A any](f func(string) data.Result[A]) Middleware[A] {
 	})
 }
 
-// DecodeBody middleware decodes (and optionally validates)  the request body into
-// a value of type A.
+// DecodeBody middleware decodes (and optionally validates) a request payload
+// into a value of type A.
 func DecodeBody[A any](c *Connection) data.Result[*A] {
 	var (
 		err         error
