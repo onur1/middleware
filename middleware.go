@@ -24,7 +24,7 @@ type Connection struct {
 // A Middleware represents a computation which modifies a HTTP connection or reads
 // from it, producing either a value of type A or an error for the next middleware
 // in the pipeline.
-type Middleware[A any] func(s *Connection) data.Result[A]
+type Middleware[A any] func(*Connection) data.Result[A]
 
 // MIME types.
 const (
@@ -59,20 +59,14 @@ var ErrUnknownContentType = errors.New("unknown content-type")
 // Map creates a middleware by applying a function on a succeeding middleware.
 func Map[A, B any](fa Middleware[A], f func(A) B) Middleware[B] {
 	return func(s *Connection) data.Result[B] {
-		return result.Map(
-			fa(s),
-			f,
-		)
+		return result.Map(fa(s), f)
 	}
 }
 
 // MapError creates a middleware by applying a function on a failing middleware.
 func MapError[A any](fa Middleware[A], f func(error) error) Middleware[A] {
 	return func(s *Connection) data.Result[A] {
-		return result.MapError(
-			fa(s),
-			f,
-		)
+		return result.MapError(fa(s), f)
 	}
 }
 
@@ -112,9 +106,7 @@ func ApSecond[A, B any](fa Middleware[A], fb Middleware[B]) Middleware[B] {
 // to determine the next one, keeping only the result of the first one.
 func ChainFirst[A, B any](ma Middleware[A], f func(A) Middleware[B]) Middleware[A] {
 	return Chain(ma, func(a A) Middleware[A] {
-		return Map(f(a), func(_ B) A {
-			return a
-		})
+		return Map(f(a), fst[A, B](a))
 	})
 }
 
@@ -126,7 +118,18 @@ func FromRequest[A any](f func(c *http.Request) data.Result[A]) Middleware[A] {
 	})
 }
 
-// OrElse creates a middleware for recovering from errors.
+// GetOrElse creates a middleware which can be used to recover from a failing
+// middleware with a new value.
+func GetOrElse[A any](ma data.Result[A], onError func(error) A) A {
+	if a, err := ma(); err != nil {
+		return onError(err)
+	} else {
+		return a
+	}
+}
+
+// OrElse creates a middleware which can be used to recover from a failing
+// middleware by switching to a new middleware.
 func OrElse[A any](ma Middleware[A], onError func(error) Middleware[A]) Middleware[A] {
 	return func(c *Connection) data.Result[A] {
 		return result.OrElse(ma(c), func(err error) data.Result[A] {
@@ -135,9 +138,11 @@ func OrElse[A any](ma Middleware[A], onError func(error) Middleware[A]) Middlewa
 	}
 }
 
+// FilterOrElse creates a middleware which can be used to fail with an error unless
+// a predicate holds on a succeeding result.
 func FilterOrElse[A any](ma Middleware[A], predicate data.Predicate[A], onFalse func(A) error) Middleware[A] {
 	return Chain(ma, func(a A) Middleware[A] {
-		return func(_ *Connection) data.Result[A] {
+		return func(*Connection) data.Result[A] {
 			if predicate(a) {
 				return result.Ok(a)
 			} else {
@@ -147,31 +152,11 @@ func FilterOrElse[A any](ma Middleware[A], predicate data.Predicate[A], onFalse 
 	})
 }
 
-func fromConnection[A any](f func(c *Connection) data.Result[A]) Middleware[A] {
-	return func(c *Connection) data.Result[A] {
-		return f(c)
-	}
-}
-
-// ModifyResponse creates a middleware for mutating response by applying a function
-// on a response writer that never fails.
+// ModifyResponse creates a middleware for writing a response.
 func ModifyResponse[A any](f func(w http.ResponseWriter)) Middleware[A] {
 	return modifyConnection[A](func(c *Connection) {
 		f(c.W)
 	})
-}
-
-func modifyConnection[A any](f func(c *Connection)) Middleware[A] {
-	return func(c *Connection) data.Result[A] {
-		sub := c.sub
-		c.sub = func(next func()) {
-			sub(func() {
-				f(c)
-				next()
-			})
-		}
-		return result.Zero[A]
-	}
 }
 
 // Status creates a middleware that sets a response status code.
@@ -227,7 +212,7 @@ func PlainText(text string) Middleware[any] {
 // FromResult converts a function, which takes no parameters and returns
 // a value of type A along with an error, into a Middleware.
 func FromResult[A any](ra data.Result[A]) Middleware[A] {
-	return func(_ *Connection) data.Result[A] {
+	return func(*Connection) data.Result[A] {
 		return ra
 	}
 }
@@ -318,7 +303,10 @@ func DecodeQuery[A any](c *Connection) data.Result[*A] {
 }
 
 // ToHandlerFunc turns a middleware into a standard http handler function.
-func ToHandlerFunc[A any](ma Middleware[A], onError func(err error, c *Connection)) http.HandlerFunc {
+func ToHandlerFunc[A any](
+	ma Middleware[A],
+	onError func(error, *Connection),
+) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := &Connection{
 			R:   r,
@@ -327,13 +315,32 @@ func ToHandlerFunc[A any](ma Middleware[A], onError func(err error, c *Connectio
 		}
 		result.Fork(ma(c), func(err error) {
 			onError(err, c)
-		}, func(_ A) {
+		}, func(A) {
 			c.sub(noop) // run effects
 
 			c.sub = nil
 			c.W = nil
 			c.R = nil
 		})
+	}
+}
+
+func fromConnection[A any](f func(*Connection) data.Result[A]) Middleware[A] {
+	return func(c *Connection) data.Result[A] {
+		return f(c)
+	}
+}
+
+func modifyConnection[A any](f func(*Connection)) Middleware[A] {
+	return func(c *Connection) data.Result[A] {
+		sub := c.sub
+		c.sub = func(next func()) {
+			sub(func() {
+				f(c)
+				next()
+			})
+		}
+		return result.Zero[A]
 	}
 }
 
@@ -344,12 +351,12 @@ func marshalJSON(v any) data.Result[[]byte] {
 }
 
 func fst[A, B any](a A) func(B) A {
-	return func(_ B) A {
+	return func(B) A {
 		return a
 	}
 }
 
-func snd[A, B any](_ A) func(B) B {
+func snd[A, B any](A) func(B) B {
 	return func(b B) B {
 		return b
 	}
