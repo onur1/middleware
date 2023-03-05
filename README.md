@@ -130,4 +130,5 @@ Output:
 
 ## Credits
 
-Inspired by [purescript-hyper](https://github.com/purescript-hyper/hyper) and [hyper-ts](https://github.com/DenisFrezzato/hyper-ts).
+* Inspired by [purescript-hyper](https://github.com/purescript-hyper/hyper) and [hyper-ts](https://github.com/DenisFrezzato/hyper-ts).
+* Uses [gorilla/schema](https://github.com/gorilla/schema) and [go-ozzo/ozzo-validation](https://github.com/go-ozzo/ozzo-validation).
