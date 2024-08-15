@@ -3,7 +3,7 @@
 A Middleware represents a computation which modifies a HTTP connection or reads from it, producing either a value of type A or an error for the next middleware in the pipeline.
 
 ```go
-type Middleware[A any] func(s *Connection) data.Result[A]
+type Middleware[A any] func(s *Connection) warp.Result[A]
 ```
 
 ## Example
@@ -20,7 +20,7 @@ import (
 	"net/http"
 
 	validation "github.com/go-ozzo/ozzo-validation"
-	"github.com/onur1/data/result"
+	"github.com/onur1/warp/result"
 	w "github.com/onur1/middleware"
 )
 

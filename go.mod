@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/go-ozzo/ozzo-validation v3.6.0+incompatible
 	github.com/gorilla/schema v1.2.0
-	github.com/onur1/data v0.0.10
+	github.com/onur1/warp v0.0.14
 	github.com/stretchr/testify v1.8.1
 )
 

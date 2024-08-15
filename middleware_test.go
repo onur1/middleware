@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"context"
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
@@ -177,7 +178,7 @@ func TestMiddleware(t *testing.T) {
 					middleware.OrElse(
 						middleware.DecodeQuery[orderForm],
 						func(err error) middleware.Middleware[*orderForm] {
-							return middleware.FromResult(func() (*orderForm, error) {
+							return middleware.FromResult(func(_ context.Context) (*orderForm, error) {
 								return &orderForm{
 									Order: err.Error(),
 								}, nil
@@ -231,7 +232,7 @@ func TestMiddleware(t *testing.T) {
 					middleware.OrElse(
 						middleware.DecodeBody[registerForm],
 						func(err error) middleware.Middleware[*registerForm] {
-							return middleware.FromResult(func() (*registerForm, error) {
+							return middleware.FromResult(func(_ context.Context) (*registerForm, error) {
 								return &registerForm{
 									Q: err.Error(),
 								}, nil
