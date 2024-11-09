@@ -1,112 +1,103 @@
 # middleware
 
-A Middleware represents a computation which modifies a HTTP connection or reads from it, producing either a value of type A or an error for the next middleware in the pipeline.
+**middleware** is a Go library that provides monadic HTTP middleware, enabling seamless composition of HTTP handlers with a functional approach. Built on top of [warp](https://github.com/onur1/warp), it supports monadic chaining, error handling, and structured responses, making middleware logic modular and composable.
 
-```go
-type Middleware[A any] func(s *Connection) warp.Result[A]
+## Features
+
+- **Monadic Middleware Composition**: Uses monadic patterns to compose complex middleware chains.
+- **Seamless Error Handling**: Defines error-handling middleware with custom status codes and messages.
+- **Flexible Data Validation**: Supports payload validation with [ozzo-validation](https://github.com/go-ozzo/ozzo-validation), integrating smoothly with Go structs.
+
+## Installation
+
+```sh
+go get github.com/onur1/middleware
 ```
 
-## Example
+## Usage
 
-The following example shows the use of monadic actions and sequentially composing them to write a response value.
-
-Note that, middleware uses [ozzo-validation](https://github.com/go-ozzo/ozzo-validation) library for decoding a request body (it accepts urlencoded forms and json as well). Simply, adding a `Validate` method on a struct type makes it validatable.
+The following example shows how to define and chain middleware actions, using monadic composition to handle requests and responses effectively.
 
 ```go
 package main
 
 import (
-	"fmt"
-	"net/http"
-
-	validation "github.com/go-ozzo/ozzo-validation"
-	"github.com/onur1/warp/result"
-	w "github.com/onur1/middleware"
+    "fmt"
+    "net/http"
+    "github.com/onur1/warp/result"
+    w "github.com/onur1/middleware"
+    validation "github.com/go-ozzo/ozzo-validation"
 )
 
-// user is the expected request body.
+// user represents the expected request body.
 type user struct {
-	Login string `json:"login"`
+    Login string `json:"login"`
 }
 
-// Validate ensures that a Login value is correctly set.
+// Validate ensures Login meets length requirements.
 func (d *user) Validate() error {
-	return validation.ValidateStruct(
-		d,
-		validation.Field(&d.Login, validation.Required, validation.Length(2, 8)),
-	)
+    return validation.ValidateStruct(d,
+        validation.Field(&d.Login, validation.Required, validation.Length(2, 8)),
+    )
 }
 
-// greeting is the response value.
+// greeting is the response type.
 type greeting struct {
-	Message string `json:"message"`
+    Message string `json:"message"`
 }
 
 var (
-  // decodeUserMiddleware decodes a request payload into a user struct and
-  // returns a pointer to it.
-	decodeUserMiddleware   = w.DecodeBody[user]
-  // sendGreetingMiddleware sends a greeting as JSON.
-	sendGreetingMiddleware = w.JSON[*greeting]
+    decodeUserMiddleware   = w.DecodeBody[user]
+    sendGreetingMiddleware = w.JSON[*greeting]
 )
 
-// greetingMiddlewareFromError creates a Middleware from an error which sets
-// the status code to 202 and returns an error message as a result.
+// greetingMiddlewareFromError sets a custom response on error.
 func greetingMiddlewareFromError(err error) w.Middleware[*greeting] {
-	return w.ApSecond(
-		w.Status(202),
-		w.FromResult(result.Ok(&greeting{Message: err.Error()})),
-	)
+    return w.ApSecond(
+        w.Status(202),
+        w.FromResult(result.Ok(&greeting{Message: err.Error()})),
+    )
 }
 
-// greetingFromUser creates a new greeting from a user value.
+// greetingFromUser creates a greeting message.
 func greetingFromUser(u *user) *greeting {
-	return &greeting{
-		Message: fmt.Sprintf("Hello, %s!", u.Login),
-	}
+    return &greeting{Message: fmt.Sprintf("Hello, %s!", u.Login)}
 }
 
-// app middleware attempts decoding a request body in order to create a greeting
-// message for the current user, falling back to a validation error message.
+// app chains middleware to handle requests or respond with validation errors.
 var app = w.Chain(
-	w.OrElse(
-		w.Map(
-			decodeUserMiddleware,
-			greetingFromUser,
-		),
-		greetingMiddlewareFromError,
-	),
-	sendGreetingMiddleware,
+    w.OrElse(
+        w.Map(decodeUserMiddleware, greetingFromUser),
+        greetingMiddlewareFromError,
+    ),
+    sendGreetingMiddleware,
 )
 
 func main() {
-	mux := http.NewServeMux()
+    mux := http.NewServeMux()
+    mux.HandleFunc("/", w.ToHandlerFunc(app, onError))
 
-	mux.HandleFunc("/", w.ToHandlerFunc(app, onError))
-
-	s := &http.Server{
-		Addr:    "localhost:8080",
-		Handler: mux,
-	}
-
-	if err := s.ListenAndServe(); err != nil {
-		fmt.Printf("error: %v\n", err)
-	}
+    server := &http.Server{Addr: "localhost:8080", Handler: mux}
+    if err := server.ListenAndServe(); err != nil {
+        fmt.Printf("error: %v\n", err)
+    }
 }
 
 func onError(err error, c *w.Connection) {
-	fmt.Printf("uncaught error: %v\n", err)
-	c.W.WriteHeader(500)
+    fmt.Printf("Uncaught error: %v\n", err)
+    c.W.WriteHeader(500)
 }
 ```
 
-The `Login` attribute of a `user` struct must have a certain length, so this request will be responded with status 202 and a validation error message as JSON.
+### Example Requests
 
-```shell
-curl -s -d "login=x" -X POST "http://localhost:8080" | jq
+With the following request, the server validates `user.Login`, enforcing a length between 2 and 8:
+
+```sh
+curl -s -d "login=x" -X POST "http://localhost:8080"
 ```
 
-Output:
+Response (validation error, status 202):
 
 ```json
 {
@@ -114,13 +105,13 @@ Output:
 }
 ```
 
-Otherwise, a greeting message will be retrieved with status 200.
+If the input is valid:
 
-```shell
-curl -s -d "login=onur1" -v  -X POST "http://localhost:8080" | jq
+```sh
+curl -s -d "login=onur1" -X POST "http://localhost:8080"
 ```
 
-Output:
+Response (greeting, status 200):
 
 ```json
 {
@@ -128,7 +119,6 @@ Output:
 }
 ```
 
-## Credits
+## License
 
-* Inspired by [purescript-hyper](https://github.com/purescript-hyper/hyper) and [hyper-ts](https://github.com/DenisFrezzato/hyper-ts).
-* Uses [gorilla/schema](https://github.com/gorilla/schema) and [go-ozzo/ozzo-validation](https://github.com/go-ozzo/ozzo-validation).
+MIT License. See [LICENSE](LICENSE) for details.
