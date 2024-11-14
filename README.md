@@ -1,5 +1,7 @@
 # middleware
 
+![middleware](./middleware-gopher.webp)
+
 **middleware** is a Go library that provides monadic HTTP middleware, enabling seamless composition of HTTP handlers with a functional approach. Built on top of [warp](https://github.com/onur1/warp), it supports monadic chaining, error handling, and structured responses, making middleware logic modular and composable.
 
 ## Features
