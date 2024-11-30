@@ -12,7 +12,7 @@ import (
 
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/go-ozzo/ozzo-validation/is"
-	"github.com/onur1/middleware"
+	"github.com/tetsuo/middleware"
 	"github.com/stretchr/testify/assert"
 )
 

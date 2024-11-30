@@ -11,8 +11,8 @@ import (
 
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/gorilla/schema"
-	"github.com/onur1/warp"
-	"github.com/onur1/warp/result"
+	"github.com/tetsuo/warp"
+	"github.com/tetsuo/warp/result"
 )
 
 // A Connection represents the connection between an HTTP server and a user agent.

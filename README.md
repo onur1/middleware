@@ -1,6 +1,6 @@
 # middleware
 
-**middleware** is a Go library that provides monadic HTTP middleware, enabling seamless composition of HTTP handlers with a functional approach. Built on top of [warp](https://github.com/onur1/warp), it supports monadic chaining, error handling, and structured responses, making middleware logic modular and composable.
+**middleware** provides monadic HTTP middleware, enabling seamless composition of HTTP handlers with a functional approach. Built on top of [warp](https://github.com/tetsuo/warp), it supports monadic chaining, error handling, and structured responses, making middleware logic modular and composable.
 
 ## Features
 
@@ -11,7 +11,7 @@
 ## Installation
 
 ```sh
-go get github.com/onur1/middleware
+go get github.com/tetsuo/middleware
 ```
 
 ## Usage
@@ -24,8 +24,8 @@ package main
 import (
     "fmt"
     "net/http"
-    "github.com/onur1/warp/result"
-    w "github.com/onur1/middleware"
+    "github.com/tetsuo/warp/result"
+    w "github.com/tetsuo/middleware"
     validation "github.com/go-ozzo/ozzo-validation"
 )
 
@@ -108,14 +108,14 @@ Response (validation error, status 202):
 If the input is valid:
 
 ```sh
-curl -s -d "login=onur1" -X POST "http://localhost:8080"
+curl -s -d "login=tetsuo" -X POST "http://localhost:8080"
 ```
 
 Response (greeting, status 200):
 
 ```json
 {
-  "message": "Hello, onur1!"
+  "message": "Hello, tetsuo!"
 }
 ```
 
